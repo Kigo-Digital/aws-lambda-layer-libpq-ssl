@@ -1,29 +1,32 @@
+# Use Amazon Linux 2023 as the base image for compatibility with provided.al2023 runtime
 FROM amazonlinux:2023
 
-ARG postgresql_version
+# Define build argument for the output zip file name
 ARG zipfile="libpq_layer.zip"
 
-# Install necessary packages
+# Install required packages:
+# postgresql-libs for libpq
+# openldap-compat for libldap_r-2.4.so.2
+# cyrus-sasl-lib for libsasl2.so.3 (dependency of libldap)
+# zip for packaging
 RUN yum update -y && \
-  yum install -y tar bzip2 make gcc openssl-devel shadow-utils readline-devel zlib-devel --allowerasing && \
-  yum install -y curl --allowerasing
+  yum install -y postgresql-libs openldap-compat cyrus-sasl-lib zip --allowerasing
 
-# Create a non-root user to perform the build
-RUN useradd -m builder
+# Create a temporary staging directory for the layer contents
+RUN mkdir -p /lambda_layer_content/lib
 
-# Set the working directory
-WORKDIR /home/builder
+# Copy shared libraries into the 'lib' subdirectory of our staging area
+RUN cp /usr/lib64/libpq.so* /lambda_layer_content/lib/ && \
+  cp /usr/lib64/libldap_r-2.4.so.2* /lambda_layer_content/lib/ && \
+  cp /usr/lib64/liblber-2.4.so.2* /lambda_layer_content/lib/ && \
+  cp /usr/lib64/libsasl2.so.3* /lambda_layer_content/lib/ && \
+  # Set executable permissions to ensure accessibility in Lambda runtime
+  chmod 755 /lambda_layer_content/lib/*
 
-# Download and unpack PostgreSQL
-RUN curl -fsSL https://ftp.postgresql.org/pub/source/v${postgresql_version}/postgresql-${postgresql_version}.tar.bz2 \
-  -o postgresql-${postgresql_version}.tar.bz2 && \
-  tar -xjf postgresql-${postgresql_version}.tar.bz2
+# Package the files into a zip.
+# Change directory to the staging area so that 'lib' is at the root of the zip.
+WORKDIR /lambda_layer_content
+RUN zip -r /${zipfile} lib
 
-# Build PostgreSQL
-RUN cd postgresql-${postgresql_version} && \
-  ./configure --prefix=/home/builder/local --with-openssl && \
-  make install
-
-# Create a ZIP file of the necessary libraries
-RUN cd /home/builder/local && \
-  zip --must-match -r /home/builder/${zipfile} lib/libpq.so*
+# (Optional) You might want to WORKDIR back to / or another directory if you have more commands
+# WORKDIR /
